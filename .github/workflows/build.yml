@@ -1,0 +1,25 @@
+name: Build
+on: [workflow_dispatch, push]
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Outils
+        run: brew install ldid dpkg make
+      - name: Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+      - name: SDK iOS
+        run: |
+          git clone --depth=1 https://github.com/theos/sdks.git /tmp/sdks
+          cp -R /tmp/sdks/iPhoneOS14.5.sdk $HOME/theos/sdks/
+      - name: Compilation
+        run: |
+          export THEOS=$HOME/theos
+          gmake package FINALPACKAGE=1 ARCHS="arm64" TARGET="iphone:clang:14.5:9.0"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rescale2-deb
+          path: packages/*.deb
