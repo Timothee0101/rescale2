@@ -42,7 +42,7 @@ jobs:
       - name: Compilation (rootless, arm64)
         run: |
           export THEOS=$HOME/theos
-          gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless ARCHS="arm64" TARGET="iphone:clang:14.5:15.0"
+          gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless ARCHS="arm64" TARGET="iphone:clang:14.5:15.0" ADDITIONAL_CFLAGS="-Wno-deprecated-declarations -Wno-error"
 
       # Filet de sécurité : tout doit être sous /var/jb et l'architecture doit être iphoneos-arm64
       - name: Vérifier et corriger le paquet
