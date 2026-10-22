@@ -18,47 +18,49 @@ static CGFloat ReScaleScreenWidth(UIInterfaceOrientation orientation) {
 	return s.width;
 }
 
-static CGSize ReScaleAdjustedSize(Class keyboardClass, CGSize original, UIInterfaceOrientation orientation) {
-	UIUserInterfaceIdiom idiom = UIDevice.currentDevice.userInterfaceIdiom;
-
-	if (idiom == UIUserInterfaceIdiomPhone) {
+static CGSize ReScaleCorrectSize(Class cls, CGSize original, UIInterfaceOrientation orient) {
+	if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
 		return (CGSize){
 			CGRectInset(UIScreen.mainScreen.bounds,
-						[keyboardClass deviceSpecificPaddingForInterfaceOrientation:orientation inputMode:nil].left,
-						0).size.width,
+				[cls deviceSpecificPaddingForInterfaceOrientation:orient inputMode:nil].left, 0).size.width,
 			original.height
 		};
 	}
-
-	if (idiom == UIUserInterfaceIdiomPad) {
-		// Force la largeur exacte de l’écran rescalé
-		return (CGSize){ ReScaleScreenWidth(orientation), original.height };
-	}
-
-	return original;
+	// iPad : on force la largeur de l’écran rescalé
+	return (CGSize){ ReScaleScreenWidth(orient), original.height };
 }
 
 %hook UIKeyboardImpl
+
+// === Méthodes de classe (taille demandée) ===
 + (CGSize)defaultSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
-	return ReScaleAdjustedSize(self, %orig, arg1);
+	return ReScaleCorrectSize(self, %orig, arg1);
 }
 + (CGSize)keyboardSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
-	return ReScaleAdjustedSize(self, %orig, arg1);
+	return ReScaleCorrectSize(self, %orig, arg1);
 }
 + (CGSize)sizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
-	return ReScaleAdjustedSize(self, %orig, arg1);
+	return ReScaleCorrectSize(self, %orig, arg1);
 }
+
+// === Méthode d’instance (la plus importante) ===
+- (void)setFrame:(CGRect)frame {
+	UIInterfaceOrientation orient = UIApplication.sharedApplication.statusBarOrientation;
+	CGSize correct = [[self class] keyboardSizeForInterfaceOrientation:orient];
+	CGRect fixed = (CGRect){ frame.origin, correct };
+	%orig(fixed);
+}
+
 %end
 
 %hook UIKeyboardLayoutStar
 - (void)setFrame:(CGRect)arg1 {
 	UIInterfaceOrientation orient = UIApplication.sharedApplication.statusBarOrientation;
-	CGSize correctSize = [UIKeyboardImpl keyboardSizeForInterfaceOrientation:orient];
-
-	// On force la bonne taille + on force le relayout des touches
-	CGRect fixed = (CGRect){ arg1.origin, correctSize };
+	CGSize correct = [UIKeyboardImpl keyboardSizeForInterfaceOrientation:orient];
+	CGRect fixed = (CGRect){ arg1.origin, correct };
 	%orig(fixed);
 
+	// Force le recalcul des touches
 	[self setNeedsLayout];
 	[self layoutIfNeeded];
 }
