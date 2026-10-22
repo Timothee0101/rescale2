@@ -7,6 +7,7 @@
 + (CGSize)defaultSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1;
 + (CGSize)keyboardSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1;
 + (CGSize)sizeForInterfaceOrientation:(UIInterfaceOrientation)arg1;
++ (UIKeyboardImpl *)activeInstance;
 @end
 
 static CGFloat ReScaleScreenWidth(UIInterfaceOrientation orientation) {
@@ -26,13 +27,38 @@ static CGSize ReScaleCorrectSize(Class cls, CGSize original, UIInterfaceOrientat
 			original.height
 		};
 	}
-	// iPad : on force la largeur de l’écran rescalé
+	// iPad → largeur de l’écran rescalé (12.9")
 	return (CGSize){ ReScaleScreenWidth(orient), original.height };
+}
+
+static void ForceKeyboardFrame(void) {
+	UIKeyboardImpl *kbd = [UIKeyboardImpl activeInstance];
+	if (!kbd) return;
+
+	UIInterfaceOrientation orient = UIApplication.sharedApplication.statusBarOrientation;
+	CGSize correct = [UIKeyboardImpl keyboardSizeForInterfaceOrientation:orient];
+
+	CGRect current = kbd.frame;
+	CGRect fixed = (CGRect){ current.origin, correct };
+
+	if (!CGSizeEqualToSize(current.size, correct)) {
+		kbd.frame = fixed;
+		[kbd setNeedsLayout];
+		[kbd layoutIfNeeded];
+	}
+
+	// Force aussi le layout star s’il existe
+	for (UIView *sub in kbd.subviews) {
+		if ([sub isKindOfClass:NSClassFromString(@"UIKeyboardLayoutStar")]) {
+			sub.frame = (CGRect){ sub.frame.origin, correct };
+			[sub setNeedsLayout];
+			[sub layoutIfNeeded];
+		}
+	}
 }
 
 %hook UIKeyboardImpl
 
-// === Méthodes de classe (taille demandée) ===
 + (CGSize)defaultSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
 	return ReScaleCorrectSize(self, %orig, arg1);
 }
@@ -43,12 +69,10 @@ static CGSize ReScaleCorrectSize(Class cls, CGSize original, UIInterfaceOrientat
 	return ReScaleCorrectSize(self, %orig, arg1);
 }
 
-// === Méthode d’instance (la plus importante) ===
 - (void)setFrame:(CGRect)frame {
 	UIInterfaceOrientation orient = UIApplication.sharedApplication.statusBarOrientation;
 	CGSize correct = [[self class] keyboardSizeForInterfaceOrientation:orient];
-	CGRect fixed = (CGRect){ frame.origin, correct };
-	%orig(fixed);
+	%orig((CGRect){ frame.origin, correct });
 }
 
 %end
@@ -57,10 +81,7 @@ static CGSize ReScaleCorrectSize(Class cls, CGSize original, UIInterfaceOrientat
 - (void)setFrame:(CGRect)arg1 {
 	UIInterfaceOrientation orient = UIApplication.sharedApplication.statusBarOrientation;
 	CGSize correct = [UIKeyboardImpl keyboardSizeForInterfaceOrientation:orient];
-	CGRect fixed = (CGRect){ arg1.origin, correct };
-	%orig(fixed);
-
-	// Force le recalcul des touches
+	%orig((CGRect){ arg1.origin, correct });
 	[self setNeedsLayout];
 	[self layoutIfNeeded];
 }
@@ -68,4 +89,23 @@ static CGSize ReScaleCorrectSize(Class cls, CGSize original, UIInterfaceOrientat
 
 %ctor {
 	%init();
+
+	// Force le frame juste après l’apparition du clavier (le moment crucial sur iPadOS 17)
+	[[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardWillShowNotification
+													  object:nil
+													   queue:[NSOperationQueue mainQueue]
+												  usingBlock:^(NSNotification *note) {
+		dispatch_async(dispatch_get_main_queue(), ^{
+			ForceKeyboardFrame();
+		});
+	}];
+
+	[[NSNotificationCenter defaultCenter] addObserverForName:UIKeyboardDidShowNotification
+													  object:nil
+													   queue:[NSOperationQueue mainQueue]
+												  usingBlock:^(NSNotification *note) {
+		dispatch_async(dispatch_get_main_queue(), ^{
+			ForceKeyboardFrame();
+		});
+	}];
 }
