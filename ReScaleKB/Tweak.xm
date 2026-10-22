@@ -1,6 +1,5 @@
 #include <substrate.h>
 #include <dlfcn.h>
-
 #import <UIKit/UIKit.h>
 
 @interface UIKeyboardImpl : UIView
@@ -10,54 +9,61 @@
 + (CGSize)sizeForInterfaceOrientation:(UIInterfaceOrientation)arg1;
 @end
 
+static CGFloat ReScaleScreenWidth(UIInterfaceOrientation orientation) {
+	CGSize s = UIScreen.mainScreen.bounds.size;
+	CGFloat longSide  = MAX(s.width, s.height);
+	CGFloat shortSide = MIN(s.width, s.height);
+	if (UIInterfaceOrientationIsLandscape(orientation)) return longSide;
+	if (UIInterfaceOrientationIsPortrait(orientation))  return shortSide;
+	return s.width;
+}
+
+static CGSize ReScaleAdjustedSize(Class keyboardClass, CGSize original, UIInterfaceOrientation orientation) {
+	UIUserInterfaceIdiom idiom = UIDevice.currentDevice.userInterfaceIdiom;
+
+	if (idiom == UIUserInterfaceIdiomPhone) {
+		return (CGSize){
+			CGRectInset(UIScreen.mainScreen.bounds,
+						[keyboardClass deviceSpecificPaddingForInterfaceOrientation:orientation inputMode:nil].left,
+						0).size.width,
+			original.height
+		};
+	}
+
+	if (idiom == UIUserInterfaceIdiomPad) {
+		// Force la largeur exacte de l’écran rescalé
+		return (CGSize){ ReScaleScreenWidth(orientation), original.height };
+	}
+
+	return original;
+}
+
 %hook UIKeyboardImpl
 + (CGSize)defaultSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
-	CGSize r = %orig;
-
-	if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
-		return (CGSize){ CGRectInset(UIScreen.mainScreen.bounds, [self deviceSpecificPaddingForInterfaceOrientation:arg1 inputMode:nil].left, 0).size.width, r.height };
-	}
-
-	return r;
+	return ReScaleAdjustedSize(self, %orig, arg1);
 }
-
 + (CGSize)keyboardSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
-	CGSize r = %orig;
-
-	if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
-		return (CGSize){ CGRectInset(UIScreen.mainScreen.bounds, [self deviceSpecificPaddingForInterfaceOrientation:arg1 inputMode:nil].left, 0).size.width, r.height };
-	}
-
-	return r;
+	return ReScaleAdjustedSize(self, %orig, arg1);
 }
-
 + (CGSize)sizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
-	CGSize r = %orig;
-
-	if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
-		return (CGSize){ CGRectInset(UIScreen.mainScreen.bounds, [self deviceSpecificPaddingForInterfaceOrientation:arg1 inputMode:nil].left, 0).size.width, r.height };
-	}
-
-	return r;
+	return ReScaleAdjustedSize(self, %orig, arg1);
 }
 %end
 
 %hook UIKeyboardLayoutStar
 - (void)setFrame:(CGRect)arg1 {
-	if (UIInterfaceOrientationIsLandscape(UIApplication.sharedApplication.statusBarOrientation)) {
-		%orig((CGRect){ CGPointZero, [UIKeyboardImpl keyboardSizeForInterfaceOrientation:UIApplication.sharedApplication.statusBarOrientation] });
+	UIInterfaceOrientation orient = UIApplication.sharedApplication.statusBarOrientation;
+	CGSize correctSize = [UIKeyboardImpl keyboardSizeForInterfaceOrientation:orient];
 
-		return;
-	}
+	// On force la bonne taille + on force le relayout des touches
+	CGRect fixed = (CGRect){ arg1.origin, correctSize };
+	%orig(fixed);
 
-	%orig;
+	[self setNeedsLayout];
+	[self layoutIfNeeded];
 }
 %end
 
 %ctor {
-	if (access("/var/lib/dpkg/info/tf.festival.rescale2.list", F_OK) == -1) return;
-
-	if (UIApplication.sharedApplication) {
-		%init();
-	}
+	%init();
 }
