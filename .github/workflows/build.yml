@@ -65,15 +65,18 @@ jobs:
 
           %hook UIKeyboardImpl
           + (CGSize)defaultSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
-          	return ReScaleAdjustedSize(self, %orig, arg1);
+          	CGSize r = %orig;
+          	return ReScaleAdjustedSize(self, r, arg1);
           }
 
           + (CGSize)keyboardSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
-          	return ReScaleAdjustedSize(self, %orig, arg1);
+          	CGSize r = %orig;
+          	return ReScaleAdjustedSize(self, r, arg1);
           }
 
           + (CGSize)sizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
-          	return ReScaleAdjustedSize(self, %orig, arg1);
+          	CGSize r = %orig;
+          	return ReScaleAdjustedSize(self, r, arg1);
           }
           %end
 
