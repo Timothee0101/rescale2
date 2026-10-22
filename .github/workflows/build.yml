@@ -1,25 +1,72 @@
-name: Build
+name: Build rootless
 on: [workflow_dispatch, push]
+
 jobs:
   build:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Outils
         run: brew install ldid dpkg make
+
       - name: Theos
         run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
       - name: SDK iOS
         run: |
           git clone --depth=1 https://github.com/theos/sdks.git /tmp/sdks
           cp -R /tmp/sdks/iPhoneOS14.5.sdk $HOME/theos/sdks/
-      - name: Compilation
+
+      # Adapte le code pour un jailbreak rootless (préfixe /var/jb)
+      - name: Adapter le code au rootless
+        run: |
+          # chemins en dur : killall, bundle de préférences, libactivator
+          find . -type f \( -name '*.xm' -o -name '*.m' -o -name '*.mm' \) -print0 | xargs -0 perl -pi -e '
+            s#"/usr/bin/killall"#"/var/jb/usr/bin/killall"#g;
+            s#"/usr/lib/libactivator.dylib"#"/var/jb/usr/lib/libactivator.dylib"#g;
+            s#\@"/Library/PreferenceBundles#\@"/var/jb/Library/PreferenceBundles#g;
+            s#^\s*if \(access\("/var/lib/dpkg/info/tf\.festival\.rescale2\.list", F_OK\) == -1\) return;#\t// (contrôle dpkg retiré pour le rootless)#;
+          '
+          # retire le module clavier (ReScaleKB) du build
+          perl -pi -e 's/ ReScaleKB//' Makefile
+          # nouvelle version, pour que Sileo la propose en mise à jour
+          perl -pi -e 's/1\.0\.5-1/1.0.5-3/' Makefile control
+          echo "--- vérifications ---"
+          grep -n "SUBPROJECTS" Makefile
+          grep -rn "var/jb" --include=*.xm --include=*.m --include=*.mm . || true
+          grep -rn "dpkg/info" --include=*.xm . || echo "contrôle dpkg bien retiré"
+
+      - name: Compilation (rootless, arm64)
         run: |
           export THEOS=$HOME/theos
-          gmake package FINALPACKAGE=1 ARCHS="arm64" TARGET="iphone:clang:14.5:9.0"
+          gmake package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless ARCHS="arm64" TARGET="iphone:clang:14.5:15.0"
+
+      # Filet de sécurité : tout doit être sous /var/jb et l'architecture doit être iphoneos-arm64
+      - name: Vérifier et corriger le paquet
+        run: |
+          f=$(ls packages/*.deb | head -1)
+          rm -rf /tmp/chk && mkdir /tmp/chk
+          dpkg-deb -R "$f" /tmp/chk
+          mkdir -p /tmp/chk/var/jb
+          for d in Library usr; do
+            if [ -d "/tmp/chk/$d" ]; then
+              echo "Déplacement de /$d sous /var/jb"
+              mkdir -p "/tmp/chk/var/jb/$d"
+              cp -Rp "/tmp/chk/$d/." "/tmp/chk/var/jb/$d/"
+              rm -rf "/tmp/chk/$d"
+            fi
+          done
+          perl -pi -e 's/^Architecture:.*/Architecture: iphoneos-arm64/' /tmp/chk/DEBIAN/control
+          dpkg-deb --root-owner-group -Zgzip -b /tmp/chk "$f.new"
+          mv "$f.new" "$f"
+          echo "--- contrôle ---"
+          dpkg-deb -I "$f"
+          dpkg-deb -c "$f"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: rescale2-deb
+          name: rescale2-rootless-deb
           path: packages/*.deb
