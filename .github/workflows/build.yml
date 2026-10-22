@@ -23,6 +23,76 @@ jobs:
       # Adapte le code pour un jailbreak rootless (préfixe /var/jb)
       - name: Adapter le code au rootless
         run: |
+          # module clavier : corrige la largeur du clavier aussi sur iPad (iPadOS 17)
+          cat > ReScaleKB/Tweak.xm <<'EOF'
+          #include <substrate.h>
+          #include <dlfcn.h>
+
+          #import <UIKit/UIKit.h>
+
+          @interface UIKeyboardImpl : UIView
+          + (UIEdgeInsets)deviceSpecificPaddingForInterfaceOrientation:(NSInteger)arg1 inputMode:(id)arg2;
+          + (CGSize)defaultSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1;
+          + (CGSize)keyboardSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1;
+          + (CGSize)sizeForInterfaceOrientation:(UIInterfaceOrientation)arg1;
+          @end
+
+          // Largeur de l'écran (rééchelonné) pour une orientation donnée
+          static CGFloat ReScaleScreenWidth(UIInterfaceOrientation orientation) {
+          	CGSize s = UIScreen.mainScreen.bounds.size;
+          	CGFloat longSide = MAX(s.width, s.height);
+          	CGFloat shortSide = MIN(s.width, s.height);
+
+          	if (UIInterfaceOrientationIsLandscape(orientation)) return longSide;
+          	if (UIInterfaceOrientationIsPortrait(orientation)) return shortSide;
+
+          	return s.width;
+          }
+
+          static CGSize ReScaleAdjustedSize(Class keyboardClass, CGSize original, UIInterfaceOrientation orientation) {
+          	UIUserInterfaceIdiom idiom = UIDevice.currentDevice.userInterfaceIdiom;
+
+          	if (idiom == UIUserInterfaceIdiomPhone) {
+          		return (CGSize){ CGRectInset(UIScreen.mainScreen.bounds, [keyboardClass deviceSpecificPaddingForInterfaceOrientation:orientation inputMode:nil].left, 0).size.width, original.height };
+          	}
+
+          	if (idiom == UIUserInterfaceIdiomPad) {
+          		return (CGSize){ ReScaleScreenWidth(orientation), original.height };
+          	}
+
+          	return original;
+          }
+
+          %hook UIKeyboardImpl
+          + (CGSize)defaultSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
+          	return ReScaleAdjustedSize(self, %orig, arg1);
+          }
+
+          + (CGSize)keyboardSizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
+          	return ReScaleAdjustedSize(self, %orig, arg1);
+          }
+
+          + (CGSize)sizeForInterfaceOrientation:(UIInterfaceOrientation)arg1 {
+          	return ReScaleAdjustedSize(self, %orig, arg1);
+          }
+          %end
+
+          %hook UIKeyboardLayoutStar
+          - (void)setFrame:(CGRect)arg1 {
+          	if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone && UIInterfaceOrientationIsLandscape(UIApplication.sharedApplication.statusBarOrientation)) {
+          		%orig((CGRect){ CGPointZero, [UIKeyboardImpl keyboardSizeForInterfaceOrientation:UIApplication.sharedApplication.statusBarOrientation] });
+
+          		return;
+          	}
+
+          	%orig;
+          }
+          %end
+
+          %ctor {
+          	%init();
+          }
+          EOF
           # chemins en dur : killall, bundle de préférences, libactivator
           find . -type f \( -name '*.xm' -o -name '*.m' -o -name '*.mm' \) -print0 | xargs -0 perl -pi -e '
             s#"/usr/bin/killall"#"/var/jb/usr/bin/killall"#g;
@@ -30,8 +100,6 @@ jobs:
             s#\@"/Library/PreferenceBundles#\@"/var/jb/Library/PreferenceBundles#g;
             s#^\s*if \(access\("/var/lib/dpkg/info/tf\.festival\.rescale2\.list", F_OK\) == -1\) return;#\t// (contrôle dpkg retiré pour le rootless)#;
           '
-          # retire le module clavier (ReScaleKB) du build
-          perl -pi -e 's/ ReScaleKB//' Makefile
           # nouvelle version, pour que Sileo la propose en mise à jour
           perl -pi -e 's/1\.0\.5-1/1.0.5-3/' Makefile control
           echo "--- vérifications ---"
