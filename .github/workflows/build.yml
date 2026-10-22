@@ -27,6 +27,8 @@ jobs:
           cat > ReScaleKB/Tweak.xm <<'EOF'
           #include <substrate.h>
           #include <dlfcn.h>
+          #include <string.h>
+          #import <objc/runtime.h>
 
           #import <UIKit/UIKit.h>
 
@@ -89,6 +91,36 @@ jobs:
           	}
 
           	%orig;
+          }
+          %end
+
+          // Vues du clavier (par préfixe de nom de classe, comparaison sans allocation)
+          static BOOL ReScaleIsKeyboardViewClassName(const char *name) {
+          	static const char *prefixes[] = { "UIKeyboard", "UIInputSet", "UIKB", "_UIKB", "UIRemoteKeyboard", "UISystemKeyboard" };
+
+          	for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+          		if (strncmp(name, prefixes[i], strlen(prefixes[i])) == 0) return YES;
+          	}
+
+          	return NO;
+          }
+
+          // Sur iPad, une vue du clavier trop étroite bloquait les touches situées en dehors de ses limites.
+          // Elle accepte maintenant un toucher si l'une de ses sous-vues le contient.
+          %hook UIView
+          - (BOOL)pointInside:(CGPoint)point withEvent:(UIEvent *)event {
+          	BOOL inside = %orig;
+
+          	if (inside || !ReScaleIsKeyboardViewClassName(object_getClassName(self))) return inside;
+          	if (UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPad) return inside;
+
+          	for (UIView *subview in self.subviews) {
+          		if (subview.hidden || subview.alpha < 0.01 || !subview.userInteractionEnabled) continue;
+
+          		if ([subview pointInside:[self convertPoint:point toView:subview] withEvent:event]) return YES;
+          	}
+
+          	return NO;
           }
           %end
 
